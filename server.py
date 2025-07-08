@@ -4,7 +4,6 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
-
 app = Flask(__name__)
 
 # Global variables
@@ -18,12 +17,14 @@ FORM_HTML = """
 <head>
     <title>Submit Code</title>
     <meta charset="utf-8">
+    <meta http-equiv="refresh" content="5">
 </head>
 <body>
     <h2>Submit Code</h2>
     {% if locked %}
         <p style="color: orange;">Submission locked. Waiting for typing acknowledgement.</p>
         <p>Current queue size: {{ queue_size }}</p>
+        <a href="/force_unlock?key={{ secret_key }}">Force Unlock (Emergency)</a>
     {% else %}
         <p style="color: green;">Ready to accept submissions</p>
         <p>Current queue size: {{ queue_size }}</p>
@@ -33,13 +34,27 @@ FORM_HTML = """
             <input type="submit" value="Submit">
         </form>
     {% endif %}
+    
+    <hr>
+    <h3>Recent Submissions:</h3>
+    <ul>
+    {% for item in recent_items %}
+        <li>{{ item[:100] }}{% if item|length > 100 %}...{% endif %}</li>
+    {% endfor %}
+    </ul>
 </body>
 </html>
 """
 
 @app.route('/')
 def index():
-    return render_template_string(FORM_HTML, locked=submission_locked, queue_size=len(content_store))
+    return render_template_string(
+        FORM_HTML, 
+        locked=submission_locked, 
+        queue_size=len(content_store),
+        secret_key=SECRET_KEY,
+        recent_items=content_store[-5:] if content_store else []
+    )
 
 @app.route('/submit', methods=['POST'])
 def submit():
@@ -59,6 +74,8 @@ def submit():
     
     content_store.append(content.strip())
     submission_locked = True
+    
+    print(f"Content submitted and locked. Queue size: {len(content_store)}")
     
     return f"Content stored successfully. Queue position: {len(content_store)}. Waiting for typing acknowledgement."
 
@@ -81,8 +98,14 @@ def get_latest():
 def acknowledge():
     global submission_locked
     
-    # Try to get key from form data first, then from JSON, then from query params
-    key = request.form.get('key') or request.json.get('key') if request.json else None or request.args.get('key')
+    # Fixed the key extraction logic
+    key = None
+    if request.form.get('key'):
+        key = request.form.get('key')
+    elif request.json and request.json.get('key'):
+        key = request.json.get('key')
+    elif request.args.get('key'):
+        key = request.args.get('key')
     
     if not key:
         return "Missing key parameter", 400
@@ -91,7 +114,24 @@ def acknowledge():
         return "Invalid key", 403
     
     submission_locked = False
+    print("Acknowledgment received. Submissions unlocked.")
+    
     return "Acknowledgement received. New submissions allowed."
+
+@app.route('/force_unlock', methods=['GET'])
+def force_unlock():
+    """Emergency unlock in case acknowledgment fails"""
+    global submission_locked
+    
+    key = request.args.get('key')
+    
+    if not key or key != SECRET_KEY:
+        return "Invalid key", 403
+    
+    submission_locked = False
+    print("Force unlock executed.")
+    
+    return "Force unlock successful. <a href='/'>Back to home</a>"
 
 @app.route('/status', methods=['GET'])
 def status():
@@ -106,6 +146,21 @@ def status():
         "queue_size": len(content_store),
         "latest_preview": content_store[-1][:100] + "..." if content_store else "No content"
     }
+
+@app.route('/clear_queue', methods=['POST'])
+def clear_queue():
+    """Clear the content queue"""
+    global content_store, submission_locked
+    
+    key = request.form.get('key') or request.args.get('key')
+    
+    if not key or key != SECRET_KEY:
+        return "Invalid key", 403
+    
+    content_store.clear()
+    submission_locked = False
+    
+    return "Queue cleared successfully."
 
 if __name__ == "__main__":
     print(f"Secret key loaded: {'Yes' if SECRET_KEY else 'No'}")
