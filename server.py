@@ -96,7 +96,7 @@ def get_latest():
 
 @app.route('/acknowledge', methods=['POST'])
 def acknowledge():
-    global submission_locked
+    global submission_locked, content_store
     
     # Fixed the key extraction logic
     key = None
@@ -112,6 +112,11 @@ def acknowledge():
     
     if key != SECRET_KEY:
         return "Invalid key", 403
+    
+    # Remove the processed content from queue
+    if content_store:
+        processed_content = content_store.pop(-1)  # Remove latest content
+        print(f"Processed and removed content: {processed_content[:50]}...")
     
     submission_locked = False
     print("Acknowledgment received. Submissions unlocked.")
