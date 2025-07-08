@@ -81,7 +81,8 @@ def get_latest():
 def acknowledge():
     global submission_locked
     
-    key = request.form.get('key')
+    # Try to get key from form data first, then from JSON, then from query params
+    key = request.form.get('key') or request.json.get('key') if request.json else None or request.args.get('key')
     
     if not key:
         return "Missing key parameter", 400
