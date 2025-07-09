@@ -121,7 +121,7 @@ def get_latest():
 def acknowledge():
     global submission_locked, content_store
     
-    key = request.form.get('key') or request.json.get('key') or request.args.get('key')
+    key = request.form.get('key') or (request.json.get('key') if request.json else None) or request.args.get('key')
     
     if not key:
         return "Missing key parameter", 400
@@ -149,6 +149,7 @@ def force_unlock():
         return "Invalid key", 403
     
     submission_locked = False
+    print("Force unlock executed.")
     
     return "Submission unlocked successfully."
 
@@ -161,7 +162,7 @@ def status():
         return "Invalid key", 403
     
     return {
-        "status": submission_locked,
+        "locked": submission_locked,
         "queue_size": len(content_store),
         "latest_preview": content_store[-1][:100] + "..." if content_store else "No content"
     }
@@ -181,8 +182,7 @@ def clear_queue():
     
     return "Queue cleared successfully."
 
-@app.route('/')
 if __name__ == "__main__":
-    print(f"Secret key loaded: {SECRET_KEY:'Yes' if SECRET_KEY or else 'No'})
-    print(f"Secret key loaded: {SECRET_KEY}")
-    app.run(debug=True, host='0.0.0',.0, port=int(os.environ.get('PORT', 5000)))
+    print(f"Secret key loaded: {'Yes' if SECRET_KEY else 'No'}")
+    print(f"Secret key value: {SECRET_KEY}")
+    app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
