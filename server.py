@@ -88,11 +88,13 @@ def submit():
     global submission_locked
     
     if submission_locked:
+        print("Submission rejected: Form is locked")
         return "Submission locked. Wait for typing acknowledgement.", 403
     
     content = request.form.get('content')
     
     if not content:
+        print("Submission rejected: Missing content")
         return "Missing content", 400
     
     content_store.append(content.strip())
@@ -107,45 +109,57 @@ def get_latest():
     key = request.args.get('key')
     
     if not key:
+        print("Latest request rejected: Missing key")
         return "Missing key parameter", 400
     
     if key != SECRET_KEY:
+        print(f"Latest request rejected: Invalid key provided: {key}")
         return "Invalid key", 403
     
     if not content_store:
+        print("Latest request: No content available")
         return "No content available", 404
     
+    print(f"Returning latest content: {content_store[-1][:50]}...")
     return content_store[-1]
 
 @app.route('/acknowledge', methods=['POST'])
 def acknowledge():
     global submission_locked, content_store
     
-    key = request.form.get('key') or (request.json.get('key') if request.json else None) or request.args.get('key')
+    print("Received ACK request")
     
+    # Prioritize form data for key, as client uses application/x-www-form-urlencoded
+    key = request.form.get('key')
     if not key:
+        print("ACK rejected: Missing key parameter")
         return "Missing key parameter", 400
     
     if key != SECRET_KEY:
+        print(f"ACK rejected: Invalid key provided: {key}")
         return "Invalid key", 403
+    
+    print(f"ACK validated. Current queue size: {len(content_store)}, Locked: {submission_locked}")
     
     if content_store:
         processed_content = content_store.pop(-1)
         print(f"Processed and removed content: {processed_content[:50]}...")
+    else:
+        print("No content in queue to process")
     
     submission_locked = False
-    print("Acknowledgment received. Submissions unlocked.")
+    print("Acknowledgment processed. Submissions unlocked.")
     
     return "Acknowledgement received. New submissions allowed."
 
 @app.route('/force_unlock', methods=['GET'])
 def force_unlock():
-    """Emergency unlock"""
     global submission_locked
     
     key = request.args.get('key')
     
     if not key or key != SECRET_KEY:
+        print(f"Force unlock rejected: Invalid key provided: {key}")
         return "Invalid key", 403
     
     submission_locked = False
@@ -155,30 +169,33 @@ def force_unlock():
 
 @app.route('/status', methods=['GET'])
 def status():
-    """Debug endpoint"""
     key = request.args.get('key')
     
     if not key or key != SECRET_KEY:
+        print(f"Status request rejected: Invalid key provided: {key}")
         return "Invalid key", 403
     
-    return {
+    status_info = {
         "locked": submission_locked,
         "queue_size": len(content_store),
         "latest_preview": content_store[-1][:100] + "..." if content_store else "No content"
     }
+    print(f"Status requested: {status_info}")
+    return status_info
 
 @app.route('/clear_queue', methods=['POST'])
 def clear_queue():
-    """Clear content queue"""
     global content_store, submission_locked
     
     key = request.form.get('key') or request.args.get('key')
     
     if not key or key != SECRET_KEY:
+        print(f"Clear queue rejected: Invalid key provided: {key}")
         return "Invalid key", 403
     
     content_store.clear()
     submission_locked = False
+    print("Queue cleared successfully.")
     
     return "Queue cleared successfully."
 
