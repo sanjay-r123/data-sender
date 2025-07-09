@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template_string, jsonify
+from flask import Flask, request, render_template_string, jsonify, redirect, make_response
 import os
 from dotenv import load_dotenv
 
@@ -63,11 +63,16 @@ FORM_RENDER = '''
         {% endif %}
     </div>
     <script>
-        // Periodically check server status without reloading the page
         function updateStatus() {
             fetch('/status?key={{ secret_key }}')
-                .then(response => response.json())
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.json();
+                })
                 .then(data => {
+                    console.log('Status update:', data);
                     const statusDiv = document.getElementById('status');
                     const queueSizeSpan = document.getElementById('queue-size');
                     const submitButton = document.querySelector('form button');
@@ -97,12 +102,12 @@ FORM_RENDER = '''
                         }
                     }
                 })
-                .catch(error => console.error('Status update failed:', error));
+                .catch(error => {
+                    console.error('Status update failed:', error);
+                });
         }
 
-        // Check status every 5 seconds
         setInterval(updateStatus, 5000);
-        // Initial check
         updateStatus();
     </script>
 </body>
@@ -112,13 +117,15 @@ FORM_RENDER = '''
 @app.route('/')
 def index():
     print("Rendering index page")
-    return render_template_string(
+    response = make_response(render_template_string(
         FORM_RENDER,
         locked=submission_locked,
         queue_size=len(content_store),
         secret_key=SECRET_KEY,
         recent_items=content_store[-5:] if content_store else []
-    )
+    ))
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    return response
 
 @app.route('/submit', methods=['POST'])
 def submit():
@@ -140,7 +147,7 @@ def submit():
     
     print(f"Content submitted and locked. Queue size: {len(content_store)}")
     
-    return f"Content stored successfully. Queue position: {len(content_store)}. Waiting for typing acknowledgement."
+    return redirect('/', code=302)
 
 @app.route('/latest', methods=['GET'])
 def get_latest():
@@ -186,7 +193,7 @@ def acknowledge():
         print("No content in queue to process")
     
     submission_locked = False
-    print("Acknowledgment processed. Submissions unlocked. New queue size: {len(content_store)}")
+    print(f"Acknowledgment processed. Submissions unlocked. New queue size: {len(content_store)}")
     
     return "Acknowledgement received. New submissions allowed."
 
@@ -204,7 +211,7 @@ def force_unlock():
     submission_locked = False
     print("Force unlock executed.")
     
-    return "Submission unlocked successfully."
+    return redirect('/', code=302)
 
 @app.route('/status', methods=['GET'])
 def status():
@@ -221,7 +228,9 @@ def status():
         "latest_preview": content_store[-1][:100] + "..." if content_store else "No content"
     }
     print(f"Status response: {status_info}")
-    return jsonify(status_info)
+    response = jsonify(status_info)
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    return response
 
 @app.route('/clear_queue', methods=['POST'])
 def clear_queue():
@@ -231,7 +240,7 @@ def clear_queue():
     key = request.form.get('key') or request.args.get('key')
     
     if not key or key != SECRET_KEY:
-        print(f"Clear queue rejected: Invalid key provided: {key}")
+        print(f"Clearល Clear queue rejected: Invalid key provided: {key}")
         return "Invalid key", 403
     
     content_store.clear()
