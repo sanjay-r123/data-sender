@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template_string
+from flask import Flask, request, render_template_string, jsonify
 import os
 from dotenv import load_dotenv
 
@@ -22,25 +22,18 @@ FORM_RENDER = '''
     <div class="bg-white p-8 rounded-lg shadow-lg max-w-2xl w-full">
         <h1 class="text-2xl font-bold mb-6 text-gray-800">Submit Code Content</h1>
         
-        {% if content_store %}
-            <div class="mb-6 p-4 bg-{% if locked %}yellow-100{% else %}green-100{% endif %} rounded">
-                <p class="text-sm font-medium">
-                    Status: {% if locked %}
-                        <span class="text-yellow-700">Locked - Waiting for typing acknowledgement</span>
-                    {% else %}
-                        <span class="text-green-700">Ready to accept submissions</span>
-                    {% endif %}
-                </p>
-                <p class="text-sm">Current queue size: {{ queue_size }}</p>
-            </div>
-        {% else %}
-            <div class="mb-6 p-4 bg-green-100 rounded">
-                <p class="text-sm font-medium text-green-700">Ready to accept submissions</p>
-                <p class="text-sm">Current queue size: {{ queue_size }}</p>
-            </div>
-        {% endif %}
+        <div id="status" class="mb-6 p-4 bg-{% if locked %}yellow-100{% else %}green-100{% endif %} rounded">
+            <p class="text-sm font-medium">
+                Status: {% if locked %}
+                    <span class="text-yellow-700">Locked - Waiting for typing acknowledgement</span>
+                {% else %}
+                    <span class="text-green-700">Ready to accept submissions</span>
+                {% endif %}
+            </p>
+            <p class="text-sm">Current queue size: <span id="queue-size">{{ queue_size }}</span></p>
+        </div>
 
-        <form method="POST" action="/submit" class="space-y-4">
+        <form id="submit-form" method="POST" action="/submit" class="space-y-4">
             <div>
                 <label for="content" class="block text-sm font-medium text-gray-700">Content</label>
                 <textarea id="content" name="content" rows="8" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50" required></textarea>
@@ -69,12 +62,56 @@ FORM_RENDER = '''
             <p class="text-sm text-gray-500">No submissions yet</p>
         {% endif %}
     </div>
+    <script>
+        // Periodically check server status without reloading the page
+        function updateStatus() {
+            fetch('/status?key={{ secret_key }}')
+                .then(response => response.json())
+                .then(data => {
+                    const statusDiv = document.getElementById('status');
+                    const queueSizeSpan = document.getElementById('queue-size');
+                    const submitButton = document.querySelector('form button');
+                    const forceUnlockLink = document.querySelector('a[href^="/force_unlock"]');
+
+                    queueSizeSpan.textContent = data.queue_size;
+                    if (data.locked) {
+                        statusDiv.classList.remove('bg-green-100');
+                        statusDiv.classList.add('bg-yellow-100');
+                        statusDiv.querySelector('p:first-child').innerHTML = '<span class="text-yellow-700">Locked - Waiting for typing acknowledgement</span>';
+                        submitButton.disabled = true;
+                        submitButton.textContent = 'Submission Locked';
+                        if (!forceUnlockLink) {
+                            const div = document.createElement('div');
+                            div.className = 'mt-4 text-center';
+                            div.innerHTML = '<a href="/force_unlock?key={{ secret_key }}" class="text-sm text-red-600 hover:text-red-800">Emergency Force Unlock</a>';
+                            document.querySelector('form').after(div);
+                        }
+                    } else {
+                        statusDiv.classList.remove('bg-yellow-100');
+                        statusDiv.classList.add('bg-green-100');
+                        statusDiv.querySelector('p:first-child').innerHTML = '<span class="text-green-700">Ready to accept submissions</span>';
+                        submitButton.disabled = false;
+                        submitButton.textContent = 'Submit Content';
+                        if (forceUnlockLink) {
+                            forceUnlockLink.parentElement.remove();
+                        }
+                    }
+                })
+                .catch(error => console.error('Status update failed:', error));
+        }
+
+        // Check status every 5 seconds
+        setInterval(updateStatus, 5000);
+        // Initial check
+        updateStatus();
+    </script>
 </body>
 </html>
 '''
 
 @app.route('/')
 def index():
+    print("Rendering index page")
     return render_template_string(
         FORM_RENDER,
         locked=submission_locked,
@@ -87,6 +124,7 @@ def index():
 def submit():
     global submission_locked
     
+    print("Received submit request")
     if submission_locked:
         print("Submission rejected: Form is locked")
         return "Submission locked. Wait for typing acknowledgement.", 403
@@ -108,6 +146,7 @@ def submit():
 def get_latest():
     key = request.args.get('key')
     
+    print("Received latest request")
     if not key:
         print("Latest request rejected: Missing key")
         return "Missing key parameter", 400
@@ -129,7 +168,6 @@ def acknowledge():
     
     print("Received ACK request")
     
-    # Prioritize form data for key, as client uses application/x-www-form-urlencoded
     key = request.form.get('key')
     if not key:
         print("ACK rejected: Missing key parameter")
@@ -148,7 +186,7 @@ def acknowledge():
         print("No content in queue to process")
     
     submission_locked = False
-    print("Acknowledgment processed. Submissions unlocked.")
+    print("Acknowledgment processed. Submissions unlocked. New queue size: {len(content_store)}")
     
     return "Acknowledgement received. New submissions allowed."
 
@@ -156,6 +194,7 @@ def acknowledge():
 def force_unlock():
     global submission_locked
     
+    print("Received force unlock request")
     key = request.args.get('key')
     
     if not key or key != SECRET_KEY:
@@ -171,6 +210,7 @@ def force_unlock():
 def status():
     key = request.args.get('key')
     
+    print("Received status request")
     if not key or key != SECRET_KEY:
         print(f"Status request rejected: Invalid key provided: {key}")
         return "Invalid key", 403
@@ -180,13 +220,14 @@ def status():
         "queue_size": len(content_store),
         "latest_preview": content_store[-1][:100] + "..." if content_store else "No content"
     }
-    print(f"Status requested: {status_info}")
-    return status_info
+    print(f"Status response: {status_info}")
+    return jsonify(status_info)
 
 @app.route('/clear_queue', methods=['POST'])
 def clear_queue():
     global content_store, submission_locked
     
+    print("Received clear queue request")
     key = request.form.get('key') or request.args.get('key')
     
     if not key or key != SECRET_KEY:
