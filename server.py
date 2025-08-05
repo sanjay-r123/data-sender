@@ -50,10 +50,18 @@ FORM_RENDER = '''
                     <label for="content" class="block text-sm font-medium text-gray-700">Content</label>
                     <textarea id="content" name="content" rows="6" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50" required></textarea>
                 </div>
-                <button type="submit" class="bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2" {% if locked %}disabled{% endif %}>
-                    {% if locked %}Submission Locked{% else %}Submit Content{% endif %}
-                </button>
+                <div class="flex space-x-4">
+                    <button type="submit" class="bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2" {% if locked %}disabled{% endif %}>
+                        {% if locked %}Submission Locked{% else %}Submit Content{% endif %}
+                    </button>
+                    <button type="button" onclick="clearQueue()" class="bg-orange-600 text-white py-2 px-4 rounded-md hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2">
+                        Clear Queue
+                    </button>
+                </div>
             </form>
+            <div class="mt-4 text-sm text-gray-600">
+                <p><strong>Note:</strong> Press ESC while typing to interrupt the current task. The task will be removed from the queue and you'll need to resubmit it.</p>
+            </div>
         </div>
 
         <!-- Screenshot Controls -->
@@ -212,6 +220,27 @@ FORM_RENDER = '''
             modal.classList.add('hidden');
         }
 
+        function clearQueue() {
+            if (confirm('Are you sure you want to clear the entire content queue?')) {
+                fetch('/clear_queue', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: `key={{ secret_key }}`
+                })
+                .then(response => response.text())
+                .then(data => {
+                    alert('Content queue cleared');
+                    location.reload();
+                })
+                .catch(error => {
+                    console.error('Error clearing queue:', error);
+                    alert('Failed to clear queue');
+                });
+            }
+        }
+
         setInterval(updateStatus, 5000);
         updateStatus();
     </script>
@@ -303,6 +332,35 @@ def acknowledge():
     print(f"Acknowledgment processed. Submissions unlocked. New queue size: {len(content_store)}")
     
     return "Acknowledgement received. New submissions allowed."
+
+@app.route('/interrupt_acknowledge', methods=['POST'])
+def interrupt_acknowledge():
+    global submission_locked, content_store
+    
+    print("Received INTERRUPT ACK request")
+    
+    key = request.form.get('key')
+    if not key:
+        print("Interrupt ACK rejected: Missing key parameter")
+        return "Missing key parameter", 400
+    
+    if key != SECRET_KEY:
+        print(f"Interrupt ACK rejected: Invalid key provided: {key}")
+        return "Invalid key", 403
+    
+    print(f"Interrupt ACK validated. Current queue size: {len(content_store)}, Locked: {submission_locked}")
+    
+    if content_store:
+        interrupted_content = content_store.pop(-1)
+        print(f"Interrupted and removed content: {interrupted_content[:50]}...")
+        print("Task was interrupted by user (ESC key) and removed from queue")
+    else:
+        print("No content in queue to remove")
+    
+    submission_locked = False
+    print(f"Interrupt acknowledgment processed. Submissions unlocked. New queue size: {len(content_store)}")
+    
+    return "Interrupt acknowledgement received. Task removed from queue. New submissions allowed."
 
 # New screenshot-related endpoints
 @app.route('/request_screenshot', methods=['POST'])
